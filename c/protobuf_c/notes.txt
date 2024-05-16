@@ -1,0 +1,3 @@
+// https://github.com/protobuf-c/protobuf-c
+# pkg-config.exe --libs 'libprotobuf-c >= 1.0.0'
+# protoc --c_out=. message.proto
