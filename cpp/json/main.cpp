@@ -9,6 +9,11 @@
 #include <vector>
 #include <optional>
 
+extern "C" {
+#include <jq.h>
+#include <jv.h>
+}
+
 #include "json.hpp"
 
 using json = nlohmann::json;
@@ -139,6 +144,34 @@ std::string fileData(std::string_view filename) {
   return ss.str();
 }
 
+void format( std::string_view content ){
+  std::string filter( "[.menu.popup.menuitem[].onclick]");
+  printf( "*********\n");
+  printf( "filter:\n");
+  printf( "%s\n", filter.c_str() );
+
+  auto jq = jq_init();
+  if( !jq ){
+    printf( "oops..\n");
+    return;
+  }
+  jq_compile( jq, filter.c_str());
+  jv input = jv_parse(content.data());
+  if( jv_is_valid(input)){
+    jq_start(jq, input, 0);
+    jv next = jq_next(jq);
+    printf( "*********\n");
+    printf( "output:\n");
+    next = jv_dump_string(next, 0);
+    printf( "'%s'\n", jv_string_value(next));
+    jv_free(next);
+  }
+
+  jv_free(input);
+  jq_teardown(&jq);
+  printf( "*********\n");
+}
+
 int main() {
   /*
    json j = { { "pi", 3.14159 }, { "happy", true }, { "name", "who" }, { "nothing", nullptr }, { "answer", { { "everything", 42 } } }, { "list", { 1, 0, 2 } }, { "object", { { "currency", "USD" }, { "value", 66.66 } } } };
@@ -154,8 +187,10 @@ int main() {
    std::cout << std::setw(4) << j << '\n';
    */
 
-  Json j(fileData("in.json"));
-
+  auto content = fileData("in.json");
+  Json j(content);
+  printf( "*********\n");
+  printf( "JSON information:\n");
   auto menu = j.get<Json>("menu");
   if (menu.has_value()) {
     printf("id: '%s'\n", menu->getOr<std::string>("id", "?").c_str());
@@ -174,6 +209,8 @@ int main() {
       }
     }
   }
+
+  format(content);
 
   return 0;
 
