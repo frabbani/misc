@@ -29,25 +29,24 @@ struct Map {
   int w, h;
 
   struct Node {
+    bool active = false;
     int i;
     Vec2 p;
-    std::vector<int> cons;
+    std::vector<bool> connected;
     Node() = default;
-    Node(int index, Vec2 pos) : i(index), p(pos) { cons.clear(); }
+    Node(int index, Vec2 pos) : active(false), i(index), p(pos) {
+      connected.clear();
+    }
     const Vec2& pos() const { return p; }
   };
 
   std::vector<Node> nodes;
-  std::vector<bool> selected;
-  bool hasEntry = false;
-  bool hasExit = false;
 
   Map(int width = 0, int height = 0) : w(width), h(height) {
     if (w > 0 && h > 0) data.resize(w * h);
   }
 
-  void select(int x, int y) {
-    if (selected.size() != nodes.size()) selected.resize(nodes.size(), false);
+  int selectClosest(int x, int y) {
     Vec2 c(x, y);
     int j = 0;
     float lensq = (c - nodes[0].p).lengthSq();
@@ -58,10 +57,7 @@ struct Map {
         j = i;
       }
     }
-    for (size_t i = 0; i < selected.size(); ++i) {
-      selected[i] = false;
-    }
-    selected[j] = true;
+    return j;
   }
 
   void load(const Pixels& pixels) {
@@ -154,34 +150,74 @@ struct Map {
                     static_cast<int>(b.x), static_cast<int>(b.y));
   }
 
-  Node& entry() { return nodes.front(); }
-  Node& exit() { return nodes.back(); }
-
-  void insert(int index) {
-    int n = int(nodes.size());
-    if (index < 0 || index >= n) return;
-    auto& node = nodes[index];
-    node.cons.clear();
-    for (auto& other : nodes) {
-      other.cons.erase(std::remove(other.cons.begin(), other.cons.end(), index),
-                       other.cons.end());
+  void connect(int a, int b) {
+    if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
+      nodes[a].connected[b] = true;
+      nodes[b].connected[a] = true;
     }
-    if ((index == 0 && !hasEntry) || (index == n - 1 && !hasExit)) return;
-    for (int i = 0; i < n; ++i) {
-      if (i == index) continue;
-      if ((i == 0 && !hasEntry) || (i == n - 1 && !hasExit)) continue;
-      if (!traceHit(node.p, nodes[i].p) && !traceHit(nodes[i].p, node.p)) {
-        node.cons.push_back(i);
-        nodes[i].cons.push_back(index);
+  }
+  void disconnect(int a, int b) {
+    if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
+      nodes[a].connected[b] = false;
+      nodes[b].connected[a] = false;
+    }
+  }
+
+  void tryConnect(int a, int b) {
+    if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
+      if (!nodes[a].active || !nodes[b].active) {
+        nodes[a].connected[b] = false;
+        nodes[b].connected[a] = false;
+        return;
       }
+      if (traceHit(nodes[a].p, nodes[b].p)) {
+        nodes[a].connected[b] = false;
+        nodes[b].connected[a] = false;
+      } else {
+        nodes[a].connected[b] = true;
+        nodes[b].connected[a] = true;
+      }
+    }
+  }
+
+  Node& start() { return nodes.front(); }
+  Node& goal() { return nodes.back(); }
+
+  const Node& start() const { return nodes.front(); }
+  const Node& goal() const { return nodes.back(); }
+
+  bool hasGoal() const { return goal().active; }
+  bool hasStart() const { return start().active; }
+
+  void enableStart(int x, int y) {
+    start().p = Vec2(x, y);
+    start().active = true;
+    for (size_t i = 1; i < nodes.size(); ++i) {
+      tryConnect(0, i);
+    }
+  }
+  void disableStart() {
+    start().active = false;
+    for (size_t i = 1; i < nodes.size(); ++i) {
+      disconnect(0, i);
+    }
+  }
+  void enableGoal(int x, int y) {
+    goal().p = Vec2(x, y);
+    goal().active = true;
+    for (size_t i = 0; i < nodes.size() - 1; ++i) {
+      tryConnect(int(nodes.size() - 1), i);
+    }
+  }
+  void disableGoal() {
+    goal().active = false;
+    for (size_t i = 0; i < nodes.size() - 1; ++i) {
+      disconnect(int(nodes.size() - 1), i);
     }
   }
 
   void buildNodes() {
     nodes.clear();
-    selected.clear();
-    hasEntry = false;
-    hasExit = false;
     Uint8 blocks[3][3];
     auto blocked = [&](int x, int y) { return blocks[y][x] > 0; };
 
@@ -197,72 +233,88 @@ struct Map {
         if (!blocked(0, 0)) {
           // bottom left unblocked, extrudde bottm left
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(-2, -2)));
+          nodes.back().active = true;
         } else if (!blocked(2, 0)) {
           // bottom right unblocked, extrude bottom right
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(+2, -2)));
+          nodes.back().active = true;
         } else if (!blocked(0, 2)) {
           // top left unblocked, extrude top left
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(-2, +2)));
+          nodes.back().active = true;
         } else if (!blocked(2, 2)) {
           // top right unblocked, extrude top right
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(+2, +2)));
+          nodes.back().active = true;
         }
       } else if (nUnblocked == 5) {
         if (blocked(0, 0) && blocked(1, 0) && blocked(0, 1) && blocked(1, 1)) {
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(+2, +2)));
+          nodes.back().active = true;
         }
         if (blocked(1, 0) && blocked(2, 0) && blocked(1, 1) && blocked(2, 1)) {
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(-2, +2)));
+          nodes.back().active = true;
         }
         if (blocked(0, 1) && blocked(1, 1) && blocked(0, 2) && blocked(1, 2)) {
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(+2, -2)));
+          nodes.back().active = true;
         }
         if (blocked(1, 1) && blocked(2, 1) && blocked(1, 2) && blocked(2, 2)) {
           nodes.push_back(Node(nodes.size(), Vec2(x, y) + Vec2(-2, -2)));
+          nodes.back().active = true;
         }
       }
     };
 
-    // entry node for dynamic insertion
     nodes.push_back(Node());
-
     for (int y = 0; y < h; ++y) {
       for (int x = 0; x < w; ++x) {
         add_node(x, y);
       }
     }
-    // exit node for dynamic insertion
     nodes.push_back(Node());
 
-    // clear selected
     for (size_t i = 0; i < nodes.size(); ++i) {
-      selected.push_back(false);
+      nodes[i].i = i;
+      nodes[i].connected = std::vector<bool>(nodes.size(), false);
     }
-
     for (size_t i = 1; i < nodes.size() - 1; ++i) {
-      insert(i);
+      for (size_t j = i + 1; j < nodes.size() - 1; ++j) {
+        tryConnect(i, j);
+      }
     }
   }
 
-  void setEntry(int x, int y) {
-    entry().p = Vec2(x, y);
-    hasEntry = true;
-    insert(0);
-    selected.front() = true;
+  void setStart(int x, int y) {
+    start().p = Vec2(x, y);
+    start().active = true;
+    for (size_t i = 1; i < nodes.size(); ++i) {
+      tryConnect(0, i);
+    }
   }
 
-  void setExit(int x, int y) {
-    exit().p = Vec2(x, y);
-    hasExit = true;
-    insert(nodes.size() - 1);
-    selected.back() = true;
+  void setGoal(int x, int y) {
+    goal().p = Vec2(x, y);
+    goal().active = true;
+    for (size_t i = 0; i < nodes.size() - 1; ++i) {
+      tryConnect(i, nodes.size() - 1);
+    }
   }
 
-  void setLines(int index, std::vector<std::pair<Vec2, Vec2>>& lines) {
-    if (index < 0 || index >= (int)nodes.size()) return;
-    auto& node = nodes[index];
-    for (size_t i = 0; i < node.cons.size(); ++i) {
-      lines.push_back({node.p, nodes[node.cons[i]].p});
+  void addStartingLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
+    if (start().active) {
+      for (size_t i = 1; i < nodes.size(); ++i) {
+        if (start().connected[i]) lines.push_back({start().p, nodes[i].p});
+      }
+    }
+  }
+
+  void addGoalLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
+    if (goal().active) {
+      for (size_t i = 0; i < nodes.size() - 1; ++i) {
+        if (goal().connected[i]) lines.push_back({goal().p, nodes[i].p});
+      }
     }
   }
 
@@ -270,14 +322,17 @@ struct Map {
     const int n = static_cast<int>(nodes.size());
 
     if (start < 0 || start >= n || goal < 0 || goal >= n) return {};
-    auto dist = [&](int a, int b) {
-      const Vec2 d = nodes[a].p - nodes[b].p;
-      return std::sqrt(d.x * d.x + d.y * d.y);
+
+    if (!nodes[start].active || !nodes[goal].active) return {};
+
+    auto dist = [&](int a, int b) -> float {
+      return std::sqrt((nodes[a].p - nodes[b].p).lengthSq());
     };
 
     struct Entry {
       float f;
       int index;
+
       bool operator>(const Entry& other) const { return f > other.f; }
     };
 
@@ -292,7 +347,7 @@ struct Map {
     open.push({dist(start, goal), start});
 
     while (!open.empty()) {
-      const int current = open.top().index;
+      int current = open.top().index;
       open.pop();
 
       if (closed[current]) continue;
@@ -308,10 +363,10 @@ struct Map {
 
       closed[current] = true;
 
-      for (int neighbor : nodes[current].cons) {
-        if (neighbor < 0 || neighbor >= n) continue;
+      for (int neighbor = 0; neighbor < n; ++neighbor) {
+        if (!nodes[current].connected[neighbor]) continue;
 
-        if (closed[neighbor]) continue;
+        if (!nodes[neighbor].active || closed[neighbor]) continue;
 
         float tentativeG = gScore[current] + dist(current, neighbor);
 
@@ -320,7 +375,6 @@ struct Map {
           gScore[neighbor] = tentativeG;
 
           float f = tentativeG + dist(neighbor, goal);
-
           open.push({f, neighbor});
         }
       }
@@ -329,14 +383,9 @@ struct Map {
     return {};  // No path found
   }
 
-  void createPathLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
+  void setPathLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
     lines.clear();
-    if (!hasEntry || !hasExit || entry().cons.empty() || exit().cons.empty())
-      return;
-    // for (int i = 1; i < static_cast<int>(nodes.size()); ++i) {
-    //   lines.push_back({nodes[i - 1].p, nodes[i].p});
-    // }
-    auto path = astar(0, static_cast<int>(nodes.size()) - 1);
+    auto path = astar(0, int(nodes.size()) - 1);
     for (size_t i = 1; i < path.size(); ++i) {
       lines.push_back({nodes[path[i - 1]].p, nodes[path[i]].p});
     }
@@ -354,9 +403,6 @@ struct Map {
     }
     for (size_t i = 0; i < nodes.size(); i++) {
       Pixel24 col(255, 0, 0);
-      if (selected.size() == nodes.size()) {
-        if (selected[i]) col = Pixel24(0, 255, 0);
-      }
       Pixels::Coord c = {static_cast<int>(nodes[i].p.x),
                          static_cast<int>(nodes[i].p.y)};
       bg.drawBox(c, 3, 3, col);
@@ -393,27 +439,15 @@ void step() {
                   static_cast<float>(DISP_H - 1 - sdl.mouseY));
 
   if (sdl.mouseKeyDown(0)) {
-    map->setEntry(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
+    map->setStart(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
   }
   if (sdl.mouseKeyDown(2)) {
-    map->setExit(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
+    map->setGoal(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
   }
-  map->createPathLines(lines);
-  // map->setLines(0, lines);
-  // map->setLines(map->nodes.size() - 1, lines);
-
-  // auto& e = map->entry();
-  // for (size_t i = 0; i < e.cons.size(); ++i) {
-  //   lines.push_back({e.p, map->nodes[e.cons[i]].p});
-  // }
-  // for (int i = 0; i < int(map->nodes.size()); ++i) {
-  //   if (map->selected[i]) {
-  //     auto& node = map->nodes[i];
-  //     for (int j = 0; j < (int)node.cons.size(); ++j) {
-  //       lines.push_back({node.p, map->nodes[node.cons[j]].p});
-  //     }
-  //   }
-  // }
+  lines.clear();
+  // map->addStartingLines(lines);
+  // map->addGoalLines(lines);
+  map->setPathLines(lines);
 }
 
 void info(Pixels& bg) {
