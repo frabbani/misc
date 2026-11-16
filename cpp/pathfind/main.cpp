@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <sstream>
 #include <string>
@@ -33,10 +34,23 @@ struct Map {
     int i;
     Vec2 p;
     std::vector<bool> connected;
+    std::vector<int> connections;
+    bool hasStart = false;
+    bool hasGoal = false;
+
     Node() = default;
     Node(int index, Vec2 pos) : active(false), i(index), p(pos) {
       connected.clear();
+      hasStart = hasGoal = false;
+      connections.clear();
     }
+    void getConnections() {
+      connections.clear();
+      for (size_t i = 0; i < connected.size(); ++i) {
+        if (connected[i]) connections.push_back(static_cast<int>(i));
+      }
+    }
+
     const Vec2& pos() const { return p; }
   };
 
@@ -181,40 +195,13 @@ struct Map {
   }
 
   Node& start() { return nodes.front(); }
-  Node& goal() { return nodes.back(); }
+  Node& end() { return nodes.back(); }
 
   const Node& start() const { return nodes.front(); }
-  const Node& goal() const { return nodes.back(); }
+  const Node& end() const { return nodes.back(); }
 
-  bool hasGoal() const { return goal().active; }
+  bool hasEnd() const { return end().active; }
   bool hasStart() const { return start().active; }
-
-  void enableStart(int x, int y) {
-    start().p = Vec2(x, y);
-    start().active = true;
-    for (size_t i = 1; i < nodes.size(); ++i) {
-      tryConnect(0, i);
-    }
-  }
-  void disableStart() {
-    start().active = false;
-    for (size_t i = 1; i < nodes.size(); ++i) {
-      disconnect(0, i);
-    }
-  }
-  void enableGoal(int x, int y) {
-    goal().p = Vec2(x, y);
-    goal().active = true;
-    for (size_t i = 0; i < nodes.size() - 1; ++i) {
-      tryConnect(int(nodes.size() - 1), i);
-    }
-  }
-  void disableGoal() {
-    goal().active = false;
-    for (size_t i = 0; i < nodes.size() - 1; ++i) {
-      disconnect(int(nodes.size() - 1), i);
-    }
-  }
 
   void buildNodes() {
     nodes.clear();
@@ -294,36 +281,51 @@ struct Map {
     }
   }
 
-  void setGoal(int x, int y) {
-    goal().p = Vec2(x, y);
-    goal().active = true;
+  void setEnd(int x, int y) {
+    end().p = Vec2(x, y);
+    end().active = true;
     for (size_t i = 0; i < nodes.size() - 1; ++i) {
       tryConnect(i, nodes.size() - 1);
     }
   }
 
+  void clearStart() {
+    start().active = false;
+    start().connections.clear();
+    for (size_t i = 1; i < nodes.size(); ++i) {
+      disconnect(0, i);
+    }
+  }
+  void clearEnd() {
+    end().active = false;
+    end().connections.clear();
+    for (size_t i = 0; i < nodes.size() - 1; ++i) {
+      disconnect(int(nodes.size() - 1), i);
+    }
+  }
+
   void addStartingLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
-    if (start().active) {
-      for (size_t i = 1; i < nodes.size(); ++i) {
-        if (start().connected[i]) lines.push_back({start().p, nodes[i].p});
-      }
+    for (size_t i = 1; i < nodes.size(); ++i) {
+      if (start().connected[i]) lines.push_back({start().p, nodes[i].p});
     }
   }
 
-  void addGoalLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
-    if (goal().active) {
+  void addEndingLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
+    if (end().active) {
       for (size_t i = 0; i < nodes.size() - 1; ++i) {
-        if (goal().connected[i]) lines.push_back({goal().p, nodes[i].p});
+        if (end().connected[i]) {
+          lines.push_back({end().p, nodes[i].p});
+        }
       }
     }
   }
 
-  std::vector<int> astar(int start, int goal) {
+  std::vector<int> astar(int start, int end) {
     const int n = static_cast<int>(nodes.size());
 
-    if (start < 0 || start >= n || goal < 0 || goal >= n) return {};
+    if (start < 0 || start >= n || end < 0 || end >= n) return {};
 
-    if (!nodes[start].active || !nodes[goal].active) return {};
+    if (!nodes[start].active || !nodes[end].active) return {};
 
     auto dist = [&](int a, int b) -> float {
       return std::sqrt((nodes[a].p - nodes[b].p).lengthSq());
@@ -344,7 +346,7 @@ struct Map {
     std::vector<bool> closed(n, false);
 
     gScore[start] = 0.0f;
-    open.push({dist(start, goal), start});
+    open.push({dist(start, end), start});
 
     while (!open.empty()) {
       int current = open.top().index;
@@ -352,10 +354,10 @@ struct Map {
 
       if (closed[current]) continue;
 
-      if (current == goal) {
+      if (current == end) {
         std::vector<int> path;
 
-        for (int at = goal; at != -1; at = parent[at]) path.push_back(at);
+        for (int at = end; at != -1; at = parent[at]) path.push_back(at);
 
         std::reverse(path.begin(), path.end());
         return path;
@@ -363,9 +365,8 @@ struct Map {
 
       closed[current] = true;
 
-      for (int neighbor = 0; neighbor < n; ++neighbor) {
-        if (!nodes[current].connected[neighbor]) continue;
-
+      for (size_t i = 0; i < nodes[current].connections.size(); ++i) {
+        int neighbor = nodes[current].connections[i];
         if (!nodes[neighbor].active || closed[neighbor]) continue;
 
         float tentativeG = gScore[current] + dist(current, neighbor);
@@ -374,10 +375,26 @@ struct Map {
           parent[neighbor] = current;
           gScore[neighbor] = tentativeG;
 
-          float f = tentativeG + dist(neighbor, goal);
+          float f = tentativeG + dist(neighbor, end);
           open.push({f, neighbor});
         }
       }
+
+      // for (int neighbor = 0; neighbor < n; ++neighbor) {
+      //   if (!nodes[current].connected[neighbor]) continue;
+
+      //   if (!nodes[neighbor].active || closed[neighbor]) continue;
+
+      //   float tentativeG = gScore[current] + dist(current, neighbor);
+
+      //   if (tentativeG < gScore[neighbor]) {
+      //     parent[neighbor] = current;
+      //     gScore[neighbor] = tentativeG;
+
+      //     float f = tentativeG + dist(neighbor, end);
+      //     open.push({f, neighbor});
+      //   }
+      // }
     }
 
     return {};  // No path found
@@ -385,6 +402,11 @@ struct Map {
 
   void setPathLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
     lines.clear();
+    start().getConnections();
+    end().getConnections();
+    for (auto& node : nodes) {
+      node.getConnections();
+    }
     auto path = astar(0, int(nodes.size()) - 1);
     for (size_t i = 1; i < path.size(); ++i) {
       lines.push_back({nodes[path[i - 1]].p, nodes[path[i]].p});
@@ -442,11 +464,11 @@ void step() {
     map->setStart(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
   }
   if (sdl.mouseKeyDown(2)) {
-    map->setGoal(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
+    map->setEnd(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
   }
   lines.clear();
   // map->addStartingLines(lines);
-  // map->addGoalLines(lines);
+  // map->addEndingLines(lines);
   map->setPathLines(lines);
 }
 
