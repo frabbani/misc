@@ -30,31 +30,36 @@ struct Map {
   int w, h;
 
   struct Node {
-    bool active = false;
     int i;
     Vec2 p;
-    std::vector<bool> connected;
+    bool active = false;
     std::vector<int> connections;
     bool hasStart = false;
-    bool hasGoal = false;
+    bool hasEnd = false;
 
     Node() = default;
-    Node(int index, Vec2 pos) : active(false), i(index), p(pos) {
-      connected.clear();
-      hasStart = hasGoal = false;
+    Node(int index, Vec2 pos) : i(index), p(pos), active(false) {
+      hasStart = hasEnd = false;
       connections.clear();
     }
-    void getConnections() {
-      connections.clear();
-      for (size_t i = 0; i < connected.size(); ++i) {
-        if (connected[i]) connections.push_back(static_cast<int>(i));
-      }
+    // void getConnections() {
+    //   connections.clear();
+    //   for (size_t i = 0; i < connected.size(); ++i) {
+    //     if (connected[i]) connections.push_back(static_cast<int>(i));
+    //   }
+    // }
+
+    int a() { return hasStart ? 0 : 1; }
+    int b() {
+      return hasEnd ? int(connections.size()) - 1 : int(connections.size()) - 2;
     }
 
     const Vec2& pos() const { return p; }
   };
 
   std::vector<Node> nodes;
+  int startIdx = -1;
+  int endIdx = -1;
 
   Map(int width = 0, int height = 0) : w(width), h(height) {
     if (w > 0 && h > 0) data.resize(w * h);
@@ -164,44 +169,34 @@ struct Map {
                     static_cast<int>(b.x), static_cast<int>(b.y));
   }
 
-  void connect(int a, int b) {
-    if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
-      nodes[a].connected[b] = true;
-      nodes[b].connected[a] = true;
-    }
-  }
-  void disconnect(int a, int b) {
-    if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
-      nodes[a].connected[b] = false;
-      nodes[b].connected[a] = false;
-    }
-  }
+  // void connect(int a, int b) {
+  //   if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
+  //     nodes[a].connected[b] = true;
+  //     nodes[b].connected[a] = true;
+  //   }
+  // }
+  // void disconnect(int a, int b) {
+  //   if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
+  //     nodes[a].connected[b] = false;
+  //     nodes[b].connected[a] = false;
+  //   }
+  // }
 
   void tryConnect(int a, int b) {
-    if (a >= 0 && a < nodes.size() && b >= 0 && b < nodes.size()) {
-      if (!nodes[a].active || !nodes[b].active) {
-        nodes[a].connected[b] = false;
-        nodes[b].connected[a] = false;
-        return;
-      }
-      if (traceHit(nodes[a].p, nodes[b].p)) {
-        nodes[a].connected[b] = false;
-        nodes[b].connected[a] = false;
-      } else {
-        nodes[a].connected[b] = true;
-        nodes[b].connected[a] = true;
+    int n = int(nodes.size());
+    if (a >= 0 && a < n && b >= 0 && b < n) {
+      if (!traceHit(nodes[a].p, nodes[b].p)) {
+        nodes[a].connections.push_back(b);
+        nodes[b].connections.push_back(a);
       }
     }
   }
 
-  Node& start() { return nodes.front(); }
-  Node& end() { return nodes.back(); }
+  Node& start() { return nodes[startIdx]; }
+  Node& end() { return nodes[endIdx]; }
 
-  const Node& start() const { return nodes.front(); }
-  const Node& end() const { return nodes.back(); }
-
-  bool hasEnd() const { return end().active; }
-  bool hasStart() const { return start().active; }
+  const Node& start() const { return nodes[startIdx]; }
+  const Node& end() const { return nodes[endIdx]; }
 
   void buildNodes() {
     nodes.clear();
@@ -261,62 +256,81 @@ struct Map {
       }
     }
     nodes.push_back(Node());
+    startIdx = 0;
+    endIdx = nodes.size() - 1;
 
-    for (size_t i = 0; i < nodes.size(); ++i) {
-      nodes[i].i = i;
-      nodes[i].connected = std::vector<bool>(nodes.size(), false);
+    for (size_t i = 0; i < nodes.size(); i++) {
+      nodes[i].connections.push_back(startIdx);
     }
-    for (size_t i = 1; i < nodes.size() - 1; ++i) {
-      for (size_t j = i + 1; j < nodes.size() - 1; ++j) {
+    for (size_t i = 1; i < nodes.size(); ++i) {
+      for (size_t j = i + 1; j < nodes.size(); ++j) {
         tryConnect(i, j);
       }
+    }
+    for (size_t i = 0; i < nodes.size(); i++) {
+      nodes[i].connections.push_back(endIdx);
     }
   }
 
   void setStart(int x, int y) {
-    start().p = Vec2(x, y);
+    clearStart();
+    if (!walkable(x, y)) return;
     start().active = true;
+    start().p = Vec2(x, y);
+    start().connections.clear();
     for (size_t i = 1; i < nodes.size(); ++i) {
-      tryConnect(0, i);
+      if (!traceHit(start().p, nodes[i].p)) {
+        start().connections.push_back(i);
+        nodes[i].hasStart = true;
+      } else {
+        nodes[i].hasStart = false;
+      }
     }
   }
 
   void setEnd(int x, int y) {
-    end().p = Vec2(x, y);
+    clearEnd();
+    if (!walkable(x, y)) return;
     end().active = true;
+    end().p = Vec2(x, y);
     for (size_t i = 0; i < nodes.size() - 1; ++i) {
-      tryConnect(i, nodes.size() - 1);
+      if (!traceHit(end().p, nodes[i].p)) {
+        end().connections.push_back(i);
+        nodes[i].hasEnd = true;
+      } else {
+        nodes[i].hasEnd = false;
+      }
     }
   }
 
   void clearStart() {
     start().active = false;
-    start().connections.clear();
     for (size_t i = 1; i < nodes.size(); ++i) {
-      disconnect(0, i);
+      nodes[i].hasStart = false;
     }
+    start().connections.clear();
   }
   void clearEnd() {
     end().active = false;
-    end().connections.clear();
     for (size_t i = 0; i < nodes.size() - 1; ++i) {
-      disconnect(int(nodes.size() - 1), i);
+      nodes[i].hasEnd = false;
     }
+    end().connections.clear();
   }
 
   void addStartingLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
-    for (size_t i = 1; i < nodes.size(); ++i) {
-      if (start().connected[i]) lines.push_back({start().p, nodes[i].p});
+    if (!start().active) return;
+    for (size_t i = 0; i < start().connections.size(); ++i) {
+      int idx = start().connections[i];
+      lines.push_back({start().p, nodes[idx].p});
     }
   }
 
   void addEndingLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
-    if (end().active) {
-      for (size_t i = 0; i < nodes.size() - 1; ++i) {
-        if (end().connected[i]) {
-          lines.push_back({end().p, nodes[i].p});
-        }
-      }
+    if (!end().active) return;
+    for (size_t i = 0; i < end().connections.size(); ++i) {
+      int idx = end().connections[i];
+      lines.push_back({end().p, nodes[idx].p});
     }
   }
 
@@ -365,7 +379,7 @@ struct Map {
 
       closed[current] = true;
 
-      for (size_t i = 0; i < nodes[current].connections.size(); ++i) {
+      for (size_t i = nodes[current].a(); i <= nodes[current].b(); ++i) {
         int neighbor = nodes[current].connections[i];
         if (!nodes[neighbor].active || closed[neighbor]) continue;
 
@@ -402,11 +416,6 @@ struct Map {
 
   void setPathLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
     lines.clear();
-    start().getConnections();
-    end().getConnections();
-    for (auto& node : nodes) {
-      node.getConnections();
-    }
     auto path = astar(0, int(nodes.size()) - 1);
     for (size_t i = 1; i < path.size(); ++i) {
       lines.push_back({nodes[path[i - 1]].p, nodes[path[i]].p});
