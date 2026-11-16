@@ -42,16 +42,11 @@ struct Map {
       hasStart = hasEnd = false;
       connections.clear();
     }
-    // void getConnections() {
-    //   connections.clear();
-    //   for (size_t i = 0; i < connected.size(); ++i) {
-    //     if (connected[i]) connections.push_back(static_cast<int>(i));
-    //   }
-    // }
 
     int a() { return hasStart ? 0 : 1; }
     int b() {
-      return hasEnd ? int(connections.size()) - 1 : int(connections.size()) - 2;
+      return hasEnd ? static_cast<int>(connections.size() - 1)
+                    : static_cast<int>(connections.size() - 2);
     }
 
     const Vec2& pos() const { return p; }
@@ -183,7 +178,7 @@ struct Map {
   // }
 
   void tryConnect(int a, int b) {
-    int n = int(nodes.size());
+    int n = static_cast<int>(nodes.size());
     if (a >= 0 && a < n && b >= 0 && b < n) {
       if (!traceHit(nodes[a].p, nodes[b].p)) {
         nodes[a].connections.push_back(b);
@@ -416,7 +411,8 @@ struct Map {
 
   void setPathLines(std::vector<std::pair<Vec2, Vec2>>& lines) {
     lines.clear();
-    auto path = astar(0, int(nodes.size()) - 1);
+    int e = static_cast<int>(nodes.size() - 1);
+    auto path = astar(0, e);
     for (size_t i = 1; i < path.size(); ++i) {
       lines.push_back({nodes[path[i - 1]].p, nodes[path[i]].p});
     }
